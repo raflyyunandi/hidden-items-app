@@ -26,17 +26,18 @@ Setiap langkah harus:
 - `#` = rintangan (tidak bisa dilalui)
 - `.` = jalan (item hanya boleh disembunyikan di sini)
 - `X` = posisi awal pemain
-- `*` = item (ditampilkan hanya jika Anda berhasil menemukannya)
+- `$` = kemungkinan lokasi item (sel jalan `.` yang dilewati pemain) (opsional/bonus)
+- `*` = item (ditampilkan hanya jika Anda berhasil menemukannya) (opsional)
 
 ## Output Program
 Program menampilkan:
-1. Grid (akan menampilkan `*` jika item berhasil ditemukan)
+1. Grid (akan menampilkan `$` sebagai bonus, dan `*` hanya jika fitur item diaktifkan)
 2. Koordinat akhir pemain dalam format `x,y` (1-based):
    - `x` = kolom (dari kiri ke kanan)
    - `y` = baris (dari atas ke bawah)
-3. Status berhasil/gagal
+3. Status: ITEM DITEMUKAN / ITEM BELUM DITEMUKAN
 
-Catatan: yang dianggap “kemungkinan lokasi item” adalah **sel `.` yang dilewati pemain** saat bergerak dengan A/B/C.
+Catatan: bonus `$` menandai **sel `.` yang dilewati pemain** saat bergerak dengan A/B/C.
 
 ## Struktur File
 - `hidden-item.php` = logika permainan (tanpa tampilan)

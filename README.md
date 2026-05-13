@@ -18,9 +18,16 @@ Dari posisi `X`, pemain bergerak secara berurutan:
 2. **Ke kanan (Right/East)** sebanyak **B** langkah  
 3. **Ke bawah (Down/South)** sebanyak **C** langkah  
 
+Catatan input:
+- A, B, C **wajib diisi** dan harus angka bulat **>= 1**.
+
 Setiap langkah harus:
 - Tidak keluar dari grid
 - Tidak menabrak `#` (rintangan)
+
+### Catatan Penting (Agar Game Adil)
+- Karena kemenangan ditentukan dari **posisi akhir**, maka item acak dipilih dari **posisi akhir yang memang bisa dicapai** oleh aturan gerak (naik → kanan → turun) dengan kombinasi A/B/C (>= 1).
+- Ini mencegah kondisi item berada di sel `.` yang tidak mungkin menjadi posisi akhir (yang membuat permainan mustahil).
 
 ### Arti Simbol di Grid
 - `#` = rintangan (tidak bisa dilalui)
@@ -31,17 +38,17 @@ Setiap langkah harus:
 
 ## Output Program
 Program menampilkan:
-1. Grid (akan menampilkan `$` sebagai bonus, dan `*` hanya jika fitur item diaktifkan)
+1. Grid (bonus `$` untuk sel yang dilewati; `*` hanya muncul jika ITEM DITEMUKAN)
 2. Koordinat akhir pemain dalam format `x,y` (1-based):
    - `x` = kolom (dari kiri ke kanan)
    - `y` = baris (dari atas ke bawah)
 3. Status: ITEM DITEMUKAN / ITEM BELUM DITEMUKAN
 
-Catatan: bonus `$` menandai **sel `.` yang dilewati pemain** saat bergerak dengan A/B/C.
+Catatan: bonus `$` menandai **sel `.` yang dilewati pemain** saat bergerak dengan A/B/C. Pada tampilan web, daftar koordinat ini ditulis sebagai “History (Riwayat Koordinat)”.
 
 ## Struktur File
 - `hidden-item.php` = logika permainan (tanpa tampilan)
-- `config.php` = grid default + aturan/keterangan simbol
+- `config.php` = grid per level + aturan/keterangan simbol
 - `index.php` = entry point (CLI dan server lokal)
 
 ## Menjalankan (Command Line)
@@ -50,6 +57,12 @@ Masuk ke folder project:
 
 ```bash
 cd d:\Pekerjaan\hidden-items-app
+```
+
+Menentukan level:
+
+```bash
+php index.php --level=1 --a=1 --b=2 --c=1
 ```
 
 Jalankan dengan argumen A/B/C:
@@ -95,10 +108,14 @@ php -S localhost:8000 index.php
 Buka di browser:
 - Halaman HTML (form input A/B/C + grid):
   - `http://localhost:8000/`
-  - Contoh: `http://localhost:8000/?a=1&b=2&c=1`
+  - Contoh: `http://localhost:8000/?level=1&a=1&b=2&c=1`
   - Reset item (acak ulang): `http://localhost:8000/?reset=1`
 - Endpoint API (JSON):
-  - `http://localhost:8000/api?a=1&b=2&c=1`
+  - `http://localhost:8000/api?level=1&a=1&b=2&c=1`
+
+Catatan:
+- Pada mode web, input A, B, C **wajib diisi** dan harus angka bulat >= 1.
+- Tombol “Naik ke Level berikutnya” akan muncul jika statusnya **ITEM DITEMUKAN**.
 
 ## Mengganti Grid
 

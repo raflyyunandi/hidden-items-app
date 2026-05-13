@@ -76,6 +76,8 @@ function getRules(): array
         'Pemain bergerak berurutan: naik A langkah, kanan B langkah, turun C langkah.',
         'Setiap langkah tidak boleh keluar grid dan tidak boleh menabrak rintangan (#).',
         'Berhasil jika posisi akhir pemain tepat berada di koordinat item.',
+        'A, B, dan C wajib diisi dan harus angka bulat >= 1.',
+        'Agar permainan selalu bisa diselesaikan, item acak dipilih dari posisi akhir yang dapat dicapai dengan kombinasi A/B/C (>= 1).',
     ];
 }
 
@@ -87,10 +89,10 @@ function getRules(): array
 function getLegend(): array
 {
     return [
-        '# = merepresentasikan rintangan (obstacle)',
-        '. = merepresentasikan jalan yang bisa dilalui (clear path)',
-        'X = merepresentasikan posisi awal pemain',
-        '$ = merepresentasikan posisi pemain saat ini (sel jalan yang dilewati)',
-        '* = mempresentasikan item tersembunyi (ditampilkan hanya jika berhasil ditemukan)',
+        '# = rintangan (obstacle)',
+        '. = jalan yang bisa dilalui (clear path)',
+        'X = posisi awal pemain',
+        '$ = kemungkinan lokasi item (sel jalan \'.\' yang dilewati) (bonus)',
+        '* = item (opsional, ditampilkan hanya jika ITEM DITEMUKAN)',
     ];
 }

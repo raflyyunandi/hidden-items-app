@@ -95,6 +95,40 @@ function isWalkable(array $grid, int $row, int $col): bool
 }
 
 /**
+ * Menghitung jumlah langkah maksimum yang bisa ditempuh dari sebuah posisi ke arah tertentu.
+ * Pergerakan berhenti jika keluar grid atau menabrak rintangan.
+ *
+ * @param array<int, array<int, string>> $grid
+ */
+function maxSteps(array $grid, int $row, int $col, int $dr, int $dc): int
+{
+    $height = count($grid);
+    $width = count($grid[0]);
+
+    $steps = 0;
+    $r = $row;
+    $c = $col;
+
+    while (true) {
+        $nr = $r + $dr;
+        $nc = $c + $dc;
+
+        if ($nr < 0 || $nr >= $height || $nc < 0 || $nc >= $width) {
+            break;
+        }
+        if (!isWalkable($grid, $nr, $nc)) {
+            break;
+        }
+
+        $steps++;
+        $r = $nr;
+        $c = $nc;
+    }
+
+    return $steps;
+}
+
+/**
  * Mengubah posisi grid menjadi key string yang unik.
  */
 function encodePositionKey(int $row, int $col): string
@@ -154,6 +188,63 @@ function chooseRandomItemPosition(array $grid): array
 }
 
 /**
+ * Menghitung semua kemungkinan posisi akhir yang dapat dicapai pemain,
+ * jika A, B, C boleh bervariasi (>= 0) dengan urutan gerak:
+ * naik -> kanan -> turun.
+ *
+ * Item dipilih dari himpunan ini agar permainan selalu bisa diselesaikan.
+ *
+ * @param array<int, array<int, string>> $grid
+ * @return array<string, true> Set keyed by "row:col"
+ */
+function computeReachableEndPositions(array $grid, int $startRow, int $startCol): array
+{
+    $reachable = [];
+
+    $maxUp = maxSteps($grid, $startRow, $startCol, -1, 0);
+    for ($a = 1; $a <= $maxUp; $a++) {
+        $rowAfterUp = $startRow - $a;
+        $colAfterUp = $startCol;
+
+        $maxRight = maxSteps($grid, $rowAfterUp, $colAfterUp, 0, 1);
+        for ($b = 1; $b <= $maxRight; $b++) {
+            $rowAfterRight = $rowAfterUp;
+            $colAfterRight = $colAfterUp + $b;
+
+            $maxDown = maxSteps($grid, $rowAfterRight, $colAfterRight, 1, 0);
+            for ($c = 1; $c <= $maxDown; $c++) {
+                $finalRow = $rowAfterRight + $c;
+                $finalCol = $colAfterRight;
+
+                if ($grid[$finalRow][$finalCol] === '.') {
+                    $reachable[encodePositionKey($finalRow, $finalCol)] = true;
+                }
+            }
+        }
+    }
+
+    return $reachable;
+}
+
+/**
+ * Memilih posisi item secara acak dari posisi akhir yang dapat dicapai (solvable).
+ *
+ * @param array<int, array<int, string>> $grid
+ * @return array{0:int,1:int} [row, col]
+ */
+function chooseRandomReachableItemPosition(array $grid, int $startRow, int $startCol): array
+{
+    $reachable = computeReachableEndPositions($grid, $startRow, $startCol);
+    $keys = array_keys($reachable);
+    if (count($keys) === 0) {
+        throw new RuntimeException("Tidak ada posisi akhir '.' yang dapat dicapai, item tidak bisa disembunyikan dengan adil.");
+    }
+
+    $key = $keys[random_int(0, count($keys) - 1)];
+    return decodePositionKey($key);
+}
+
+/**
  * Memproses input posisi item dengan format "x,y" (1-based).
  * Posisi harus berada di dalam grid dan harus pada sel '.'.
  *
@@ -210,6 +301,10 @@ function parseItemPosition(string $raw, array $grid): array
  */
 function computeFinalPlayerPosition(array $grid, int $startRow, int $startCol, int $a, int $b, int $c): array
 {
+    if ($a < 1 || $b < 1 || $c < 1) {
+        throw new InvalidArgumentException('A, B, dan C harus berupa angka bulat >= 1.');
+    }
+
     $row = $startRow;
     $col = $startCol;
 
@@ -231,6 +326,10 @@ function computeFinalPlayerPosition(array $grid, int $startRow, int $startCol, i
  */
 function computePossibleItemPositions(array $grid, int $startRow, int $startCol, int $a, int $b, int $c): array
 {
+    if ($a < 1 || $b < 1 || $c < 1) {
+        throw new InvalidArgumentException('A, B, dan C harus berupa angka bulat >= 1.');
+    }
+
     $possible = [];
 
     $row = $startRow;
@@ -244,6 +343,34 @@ function computePossibleItemPositions(array $grid, int $startRow, int $startCol,
 }
 
 /**
+ * Menghasilkan riwayat perpindahan pemain berdasarkan langkah A/B/C.
+ *
+ * Format riwayat:
+ * - elemen pertama adalah posisi awal (X)
+ * - lalu diikuti posisi tiap langkah (step-by-step) sesuai urutan: naik -> kanan -> turun
+ *
+ * @param array<int, array<int, string>> $grid
+ * @return array<int, array{0:int,1:int}> Daftar [row, col] berurutan
+ */
+function computeMovementHistory(array $grid, int $startRow, int $startCol, int $a, int $b, int $c): array
+{
+    if ($a < 1 || $b < 1 || $c < 1) {
+        throw new InvalidArgumentException('A, B, dan C harus berupa angka bulat >= 1.');
+    }
+
+    $history = [[$startRow, $startCol]];
+
+    $row = $startRow;
+    $col = $startCol;
+
+    [$row, $col] = moveAndRecord($grid, $row, $col, -1, 0, $a, 'naik', $history);
+    [$row, $col] = moveAndRecord($grid, $row, $col, 0, 1, $b, 'kanan', $history);
+    [$row, $col] = moveAndRecord($grid, $row, $col, 1, 0, $c, 'turun', $history);
+
+    return $history;
+}
+
+/**
  * Bergerak langkah demi langkah dalam satu garis lurus sambil memvalidasi batas/rintangan.
  *
  * @param array<int, array<int, string>> $grid
@@ -251,6 +378,10 @@ function computePossibleItemPositions(array $grid, int $startRow, int $startCol,
  */
 function moveAndValidate(array $grid, int $fromRow, int $fromCol, int $dr, int $dc, int $steps, string $phase): array
 {
+    if ($steps < 1) {
+        throw new InvalidArgumentException("Jumlah langkah {$phase} harus >= 1.");
+    }
+
     $height = count($grid);
     $width = count($grid[0]);
 
@@ -276,6 +407,44 @@ function moveAndValidate(array $grid, int $fromRow, int $fromCol, int $dr, int $
 }
 
 /**
+ * Bergerak langkah demi langkah dan mencatat posisi pemain pada setiap langkah ke dalam riwayat.
+ *
+ * @param array<int, array<int, string>> $grid
+ * @param array<int, array{0:int,1:int}> $history
+ * @return array{0:int,1:int} Posisi baru [row, col]
+ */
+function moveAndRecord(array $grid, int $fromRow, int $fromCol, int $dr, int $dc, int $steps, string $phase, array &$history): array
+{
+    if ($steps < 1) {
+        throw new InvalidArgumentException("Jumlah langkah {$phase} harus >= 1.");
+    }
+
+    $height = count($grid);
+    $width = count($grid[0]);
+
+    $r = $fromRow;
+    $c = $fromCol;
+
+    for ($i = 1; $i <= $steps; $i++) {
+        $nr = $r + $dr;
+        $nc = $c + $dc;
+
+        if ($nr < 0 || $nr >= $height || $nc < 0 || $nc >= $width) {
+            throw new RuntimeException("Gerakan {$phase} gagal pada langkah ke-{$i}: keluar dari grid.");
+        }
+        if (!isWalkable($grid, $nr, $nc)) {
+            throw new RuntimeException("Gerakan {$phase} gagal pada langkah ke-{$i}: menabrak rintangan '#'.");
+        }
+
+        $r = $nr;
+        $c = $nc;
+        $history[] = [$r, $c];
+    }
+
+    return [$r, $c];
+}
+
+/**
  * Bergerak langkah demi langkah dalam satu garis lurus sambil memvalidasi batas/rintangan.
  * Selama bergerak, semua sel '.' yang diinjak akan dimasukkan ke daftar kandidat item.
  *
@@ -285,6 +454,10 @@ function moveAndValidate(array $grid, int $fromRow, int $fromCol, int $dr, int $
  */
 function moveAndCollect(array $grid, int $fromRow, int $fromCol, int $dr, int $dc, int $steps, array &$collector, string $phase): array
 {
+    if ($steps < 1) {
+        throw new InvalidArgumentException("Jumlah langkah {$phase} harus >= 1.");
+    }
+
     $height = count($grid);
     $width = count($grid[0]);
 

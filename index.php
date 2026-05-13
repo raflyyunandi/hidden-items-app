@@ -33,13 +33,13 @@ function runCli(array $argv): void
         $grid = parseGrid($gridLines);
         [$startRow, $startCol] = findStartPosition($grid);
 
-        $a = $options['a'] ?? readNonNegativeIntFromStdin('Masukkan A (naik): ');
-        $b = $options['b'] ?? readNonNegativeIntFromStdin('Masukkan B (kanan): ');
-        $c = $options['c'] ?? readNonNegativeIntFromStdin('Masukkan C (turun): ');
+        $a = $options['a'] ?? readPositiveIntFromStdin('Masukkan A (naik): ');
+        $b = $options['b'] ?? readPositiveIntFromStdin('Masukkan B (kanan): ');
+        $c = $options['c'] ?? readPositiveIntFromStdin('Masukkan C (turun): ');
 
         [$itemRow, $itemCol] = $options['item'] !== null
             ? parseItemPosition($options['item'], $grid)
-            : chooseRandomItemPosition($grid);
+            : chooseRandomReachableItemPosition($grid, $startRow, $startCol);
 
         $possible = computePossibleItemPositions($grid, $startRow, $startCol, $a, $b, $c);
         [$finalRow, $finalCol] = computeFinalPlayerPosition($grid, $startRow, $startCol, $a, $b, $c);
@@ -133,15 +133,24 @@ function handleApi(): void
     $grid = parseGrid(getGridLinesByLevel($level));
     [$startRow, $startCol] = findStartPosition($grid);
 
-    $a = getQueryInt('a', 0);
-    $b = getQueryInt('b', 0);
-    $c = getQueryInt('c', 0);
+    $a = getQueryPositiveIntOrNull('a');
+    $b = getQueryPositiveIntOrNull('b');
+    $c = getQueryPositiveIntOrNull('c');
+    if ($a === null || $b === null || $c === null) {
+        http_response_code(400);
+        jsonResponse([
+            'error' => 'Input A, B, C wajib diisi dan harus angka bulat >= 1.',
+            'contoh' => '/api?level=1&a=3&b=1&c=1',
+        ]);
+        return;
+    }
 
     $itemRaw = getQueryString('item');
     $reset = getQueryInt('reset', 0) === 1;
     [$itemRow, $itemCol] = resolveItemPositionForWeb($grid, $itemRaw, $reset, $level);
 
     $possible = computePossibleItemPositions($grid, $startRow, $startCol, $a, $b, $c);
+    $history = computeMovementHistory($grid, $startRow, $startCol, $a, $b, $c);
     [$finalRow, $finalCol] = computeFinalPlayerPosition($grid, $startRow, $startCol, $a, $b, $c);
     $isFound = ($finalRow === $itemRow && $finalCol === $itemCol);
 
@@ -150,7 +159,7 @@ function handleApi(): void
         $gridToShow = markItemOnGrid($gridToShow, $itemRow, $itemCol);
     }
 
-    $possibleCoords = possibleSetToSortedCoordinates($possible);
+    $possibleCoords = historyToCoordinates($history);
     jsonResponse([
         'level' => $level,
         'input' => ['a' => $a, 'b' => $b, 'c' => $c],
@@ -175,16 +184,38 @@ function handleHtml(): void
     $level = getLevelFromRequest();
     $grid = parseGrid(getGridLinesByLevel($level));
     [$startRow, $startCol] = findStartPosition($grid);
+    $itemOptions = possibleSetToSortedCoordinates(computeReachableEndPositions($grid, $startRow, $startCol));
 
-    $a = getQueryInt('a', 0);
-    $b = getQueryInt('b', 0);
-    $c = getQueryInt('c', 0);
+    $a = getQueryPositiveIntOrNull('a');
+    $b = getQueryPositiveIntOrNull('b');
+    $c = getQueryPositiveIntOrNull('c');
 
     $itemRaw = getQueryString('item');
     $reset = getQueryInt('reset', 0) === 1;
     [$itemRow, $itemCol] = resolveItemPositionForWeb($grid, $itemRaw, $reset, $level);
 
+    if ($a === null || $b === null || $c === null) {
+        $baseGridToShow = $grid;
+        $statusText = 'Input A, B, dan C wajib diisi (angka bulat >= 1).';
+
+        header('Content-Type: text/html; charset=utf-8');
+        echo renderHtmlPage(
+            $level,
+            $a,
+            $b,
+            $c,
+            $itemRaw,
+            $statusText,
+            $baseGridToShow,
+            [],
+            false,
+            $itemOptions
+        );
+        return;
+    }
+
     $possible = computePossibleItemPositions($grid, $startRow, $startCol, $a, $b, $c);
+    $history = computeMovementHistory($grid, $startRow, $startCol, $a, $b, $c);
     [$finalRow, $finalCol] = computeFinalPlayerPosition($grid, $startRow, $startCol, $a, $b, $c);
     $isFound = ($finalRow === $itemRow && $finalCol === $itemCol);
 
@@ -193,13 +224,11 @@ function handleHtml(): void
         $gridToShow = markItemOnGrid($gridToShow, $itemRow, $itemCol);
     }
 
-    $finalX = $finalCol + 1;
-    $finalY = $finalRow + 1;
     $statusText = $isFound ? 'ITEM DITEMUKAN' : 'ITEM BELUM DITEMUKAN';
 
     header('Content-Type: text/html; charset=utf-8');
-    $possibleCoords = possibleSetToSortedCoordinates($possible);
-    echo renderHtmlPage($level, $a, $b, $c, $itemRaw, $statusText, $gridToShow, $possibleCoords, $isFound);
+    $possibleCoords = historyToCoordinates($history);
+    echo renderHtmlPage($level, $a, $b, $c, $itemRaw, $statusText, $gridToShow, $possibleCoords, $isFound, $itemOptions);
 }
 
 /**
@@ -236,15 +265,26 @@ function resolveItemPositionForWeb(array $grid, ?string $itemRaw, bool $reset, i
         clearHiddenItemCookie(getItemCookieName($level));
     }
 
+    [$startRow, $startCol] = findStartPosition($grid);
+    $reachableEnd = computeReachableEndPositions($grid, $startRow, $startCol);
+    if (count($reachableEnd) === 0) {
+        throw new RuntimeException("Tidak ada posisi akhir '.' yang dapat dicapai pada level ini.");
+    }
+
     $cookieRaw = getCookieString(getItemCookieName($level));
     if ($cookieRaw !== null) {
         $pos = parseItemCookie($cookieRaw, $grid);
         if ($pos !== null) {
-            return $pos;
+            $key = encodePositionKey($pos[0], $pos[1]);
+            if (isset($reachableEnd[$key])) {
+                return $pos;
+            }
         }
     }
 
-    $pos = chooseRandomItemPosition($grid);
+    $keys = array_keys($reachableEnd);
+    $key = $keys[random_int(0, count($keys) - 1)];
+    $pos = decodePositionKey($key);
     setHiddenItemCookie(getItemCookieName($level), $pos[0], $pos[1]);
     return $pos;
 }
@@ -369,17 +409,17 @@ function parseCliArguments(array $argv): array
         }
 
         if (startsWith($arg, '--a=')) {
-            $options['a'] = parseNonNegativeInt(substr($arg, strlen('--a=')), '--a');
+            $options['a'] = parsePositiveInt(substr($arg, strlen('--a=')), '--a');
             continue;
         }
 
         if (startsWith($arg, '--b=')) {
-            $options['b'] = parseNonNegativeInt(substr($arg, strlen('--b=')), '--b');
+            $options['b'] = parsePositiveInt(substr($arg, strlen('--b=')), '--b');
             continue;
         }
 
         if (startsWith($arg, '--c=')) {
-            $options['c'] = parseNonNegativeInt(substr($arg, strlen('--c=')), '--c');
+            $options['c'] = parsePositiveInt(substr($arg, strlen('--c=')), '--c');
             continue;
         }
 
@@ -430,6 +470,21 @@ function parseNonNegativeInt(string $raw, string $optionName): int
 }
 
 /**
+ * Memproses nilai opsi CLI menjadi bilangan bulat >= 1.
+ */
+function parsePositiveInt(string $raw, string $optionName): int
+{
+    if ($raw === '' || !ctype_digit($raw)) {
+        throw new InvalidArgumentException("Nilai {$optionName} harus berupa angka bulat >= 1.");
+    }
+    $value = (int)$raw;
+    if ($value < 1) {
+        throw new InvalidArgumentException("Nilai {$optionName} harus berupa angka bulat >= 1.");
+    }
+    return $value;
+}
+
+/**
  * Membaca bilangan bulat >= 0 dari STDIN dengan prompt.
  */
 function readNonNegativeIntFromStdin(string $prompt): int
@@ -447,6 +502,30 @@ function readNonNegativeIntFromStdin(string $prompt): int
         }
 
         echo "Input harus berupa angka bulat >= 0." . PHP_EOL;
+    }
+}
+
+/**
+ * Membaca bilangan bulat >= 1 dari STDIN dengan prompt.
+ */
+function readPositiveIntFromStdin(string $prompt): int
+{
+    while (true) {
+        echo $prompt;
+        $line = fgets(STDIN);
+        if ($line === false) {
+            throw new RuntimeException('Gagal membaca input.');
+        }
+
+        $line = trim($line);
+        if ($line !== '' && ctype_digit($line)) {
+            $value = (int)$line;
+            if ($value >= 1) {
+                return $value;
+            }
+        }
+
+        echo "Input harus berupa angka bulat >= 1." . PHP_EOL;
     }
 }
 
@@ -520,6 +599,53 @@ function getQueryInt(string $name, int $default): int
 }
 
 /**
+ * Mengambil bilangan bulat >= 0 dari query string.
+ * Jika tidak ada atau tidak valid, mengembalikan null.
+ */
+function getQueryNonNegativeIntOrNull(string $name): ?int
+{
+    if (!isset($_GET[$name])) {
+        return null;
+    }
+
+    $raw = $_GET[$name];
+    if (!is_string($raw)) {
+        return null;
+    }
+
+    $raw = trim($raw);
+    if ($raw === '' || !ctype_digit($raw)) {
+        return null;
+    }
+
+    return (int)$raw;
+}
+
+/**
+ * Mengambil bilangan bulat >= 1 dari query string.
+ * Jika tidak ada atau tidak valid, mengembalikan null.
+ */
+function getQueryPositiveIntOrNull(string $name): ?int
+{
+    if (!isset($_GET[$name])) {
+        return null;
+    }
+
+    $raw = $_GET[$name];
+    if (!is_string($raw)) {
+        return null;
+    }
+
+    $raw = trim($raw);
+    if ($raw === '' || !ctype_digit($raw)) {
+        return null;
+    }
+
+    $value = (int)$raw;
+    return $value >= 1 ? $value : null;
+}
+
+/**
  * Mengambil string dari query string. Jika tidak ada, mengembalikan null.
  */
 function getQueryString(string $name): ?string
@@ -549,14 +675,12 @@ function jsonResponse(array $data): void
 /**
  * Membuat HTML sederhana untuk mode web.
  */
-function renderHtmlPage(int $level, int $a, int $b, int $c, ?string $itemRaw, string $statusText, array $grid, array $possibleCoords, bool $isFound): string
+function renderHtmlPage(int $level, ?int $a, ?int $b, ?int $c, ?string $itemRaw, string $statusText, array $grid, array $possibleCoords, bool $isFound, array $itemOptions): string
 {
     $apiUrl = '/api?level=' . urlencode((string)$level) . '&a=' . urlencode((string)$a) . '&b=' . urlencode((string)$b) . '&c=' . urlencode((string)$c);
     if ($itemRaw !== null) {
         $apiUrl .= '&item=' . urlencode($itemRaw);
     }
-
-    $itemValue = $itemRaw ?? '';
 
     $rulesHtml = '';
     foreach (getRules() as $rule) {
@@ -576,7 +700,7 @@ function renderHtmlPage(int $level, int $a, int $b, int $c, ?string $itemRaw, st
         foreach ($possibleCoords as $pos) {
             $parts[] = $pos['x'] . ',' . $pos['y'];
         }
-        $possibleText = implode(' | ', $parts);
+        $possibleText = implode(' -> ', $parts);
     }
 
     $resetUrl = '/?level=' . urlencode((string)$level) . '&reset=1';
@@ -586,6 +710,15 @@ function renderHtmlPage(int $level, int $a, int $b, int $c, ?string $itemRaw, st
         $nextLevelHtml = '<p><a href="' . htmlspecialchars($nextLevelUrl, ENT_QUOTES, 'UTF-8') . '">Naik ke Level ' . (int)($level + 1) . '</a></p>';
     }
 
+    $itemSelectHtml = '<select name="item">';
+    $itemSelectHtml .= '<option value=""' . ($itemRaw === null ? ' selected' : '') . '>Acak (otomatis)</option>';
+    foreach ($itemOptions as $pos) {
+        $value = $pos['x'] . ',' . $pos['y'];
+        $selected = ($itemRaw === $value) ? ' selected' : '';
+        $itemSelectHtml .= '<option value="' . htmlspecialchars($value, ENT_QUOTES, 'UTF-8') . '"' . $selected . '>' . htmlspecialchars($value, ENT_QUOTES, 'UTF-8') . '</option>';
+    }
+    $itemSelectHtml .= '</select>';
+
     $gridHtml = renderGridAsTableHtml($grid);
 
     return '<!doctype html>'
@@ -594,6 +727,7 @@ function renderHtmlPage(int $level, int $a, int $b, int $c, ?string $itemRaw, st
         . '<style>'
         . 'body{font-family:Arial,Helvetica,sans-serif;margin:24px}'
         . 'input{width:80px}'
+        . 'select{max-width:180px}'
         . '.small{font-size:12px;margin:6px 0}'
         . '.status{font-size:12px;display:inline-block;padding:4px 8px;border:1px solid #ddd;border-radius:8px;background:#fafafa}'
         . '.grid{border-collapse:collapse;margin-top:8px}'
@@ -611,10 +745,10 @@ function renderHtmlPage(int $level, int $a, int $b, int $c, ?string $itemRaw, st
         . '<h3>Input</h3>'
         . '<form method="get" action="/">'
         . '<input type="hidden" name="level" value="' . (int)$level . '">'
-        . '<label>A (naik): <input name="a" type="number" min="0" value="' . (int)$a . '"></label> '
-        . '<label>B (kanan): <input name="b" type="number" min="0" value="' . (int)$b . '"></label> '
-        . '<label>C (turun): <input name="c" type="number" min="0" value="' . (int)$c . '"></label> '
-        . '<label>Item (x,y) opsional: <input name="item" value="' . htmlspecialchars($itemValue, ENT_QUOTES, 'UTF-8') . '" placeholder="contoh: 6,2"></label> '
+        . '<label>A (naik): <input name="a" type="number" min="1" required value="' . htmlspecialchars($a === null ? '' : (string)$a, ENT_QUOTES, 'UTF-8') . '"></label> '
+        . '<label>B (kanan): <input name="b" type="number" min="1" required value="' . htmlspecialchars($b === null ? '' : (string)$b, ENT_QUOTES, 'UTF-8') . '"></label> '
+        . '<label>C (turun): <input name="c" type="number" min="1" required value="' . htmlspecialchars($c === null ? '' : (string)$c, ENT_QUOTES, 'UTF-8') . '"></label> '
+        . '<label>Item (pilih): ' . $itemSelectHtml . '</label> '
         . '<button type="submit">Jalankan</button>'
         . '</form>'
         . '<h3>Status</h3><p class="small"><span class="status">' . htmlspecialchars($statusText, ENT_QUOTES, 'UTF-8') . '</span></p>'
@@ -676,6 +810,21 @@ function possibleSetToSortedCoordinates(array $possible): array
         return $p1['x'] <=> $p2['x'];
     });
 
+    return $coords;
+}
+
+/**
+ * Mengubah riwayat [row, col] menjadi daftar koordinat x,y (1-based) berurutan.
+ *
+ * @param array<int, array{0:int,1:int}> $history
+ * @return array<int, array{x:int,y:int}>
+ */
+function historyToCoordinates(array $history): array
+{
+    $coords = [];
+    foreach ($history as $pos) {
+        $coords[] = ['x' => $pos[1] + 1, 'y' => $pos[0] + 1];
+    }
     return $coords;
 }
 
